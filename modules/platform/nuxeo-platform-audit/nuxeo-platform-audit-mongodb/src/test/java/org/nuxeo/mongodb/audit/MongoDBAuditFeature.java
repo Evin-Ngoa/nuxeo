@@ -45,17 +45,17 @@ import org.nuxeo.runtime.test.runner.TransactionalFeature;
 @Features({ MongoDBFeature.class, CoreFeature.class })
 public class MongoDBAuditFeature implements RunnerFeature {
 
-//    @Override
-//    public void initialize(FeaturesRunner runner) {
-//        runner.getFeature(TransactionalFeature.class).addWaiter(duration -> {
-//            // Wait for audit completion
-//            long before = System.currentTimeMillis();
-//            if (!Framework.getService(AuditLogger.class).await(duration.toMillis(), TimeUnit.MILLISECONDS)) {
-//                return false;
-//            }
-//            return true;
-//        });
-//    }
+    @Override
+    public void initialize(FeaturesRunner runner) {
+        runner.getFeature(TransactionalFeature.class).addWaiter(duration -> {
+            // Wait for audit completion
+            long before = System.currentTimeMillis();
+            if (!Framework.getService(AuditLogger.class).await(duration.toMillis(), TimeUnit.MILLISECONDS)) {
+                return false;
+            }
+            return true;
+        });
+    }
 
     @Override
     public void testCreated(Object test) throws Exception {

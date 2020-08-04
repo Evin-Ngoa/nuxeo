@@ -16,8 +16,6 @@
  */
 package org.nuxeo.drive.mongodb;
 
-import static org.nuxeo.ecm.core.api.event.DocumentEventCategories.EVENT_DOCUMENT_CATEGORY;
-import static org.nuxeo.ecm.platform.audit.api.BuiltinLogEntryData.LOG_CATEGORY;
 import static org.nuxeo.ecm.platform.audit.api.BuiltinLogEntryData.LOG_ID;
 import static org.nuxeo.ecm.platform.audit.api.BuiltinLogEntryData.LOG_LOG_DATE;
 import static org.nuxeo.ecm.platform.audit.api.BuiltinLogEntryData.LOG_REPOSITORY_ID;
@@ -28,10 +26,13 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.nuxeo.drive.service.NuxeoDriveEvents;
+import org.bson.Document;
+import org.bson.conversions.Bson;
 import org.nuxeo.drive.service.SynchronizationRoots;
 import org.nuxeo.drive.service.impl.AuditChangeFinder;
 import org.nuxeo.ecm.core.api.CoreSession;
@@ -43,7 +44,13 @@ import org.nuxeo.ecm.platform.audit.api.AuditQueryBuilder;
 import org.nuxeo.ecm.platform.audit.api.AuditReader;
 import org.nuxeo.ecm.platform.audit.api.ExtendedInfo;
 import org.nuxeo.ecm.platform.audit.api.LogEntry;
+import org.nuxeo.mongodb.audit.MongoDBAuditBackend;
+import org.nuxeo.mongodb.audit.MongoDBAuditEntryReader;
 import org.nuxeo.runtime.api.Framework;
+
+import com.mongodb.client.FindIterable;
+import com.mongodb.client.MongoCollection;
+import com.mongodb.client.model.Sorts;
 
 /**
  * Override the JPA audit based change finder to execute query in BSON.
@@ -128,70 +135,96 @@ public class MongoDBAuditChangeFinder extends AuditChangeFinder {
     @Override
     protected List<LogEntry> queryAuditEntries(CoreSession session, SynchronizationRoots activeRoots,
             Set<String> collectionSyncRootMemberIds, long lowerBound, long upperBound, int limit) {
-        AuditReader auditService = Framework.getService(AuditReader.class);
-/*        // Set fixed query parameters
-        QueryBuilder queryBuilder = new AuditQueryBuilder().predicate(
-                Predicates.in(LOG_REPOSITORY_ID, session.getRepositoryName()));
+        MongoDBAuditBackend auditService = (MongoDBAuditBackend) Framework.getService(AuditReader.class);
+        MongoCollection<Document> auditCollection = auditService.getAuditCollection();
+        StringBuilder queryBuilder = new StringBuilder();
         Map<String, Object> params = new HashMap<>();
-        params.put("repositoryId", session.getRepositoryName());
 
-        // Build query and set dynamic parameters
-        StringBuilder auditQuerySb = new StringBuilder("from LogEntry log where ");
-        auditQuerySb.append("log.repositoryId = :repositoryId");
-        auditQuerySb.append(" and ");
-        auditQuerySb.append("(");
+        queryBuilder.append("{\n");
+        queryBuilder.append("  \"$and\": [\n");
+        queryBuilder.append("    {\n");
+        queryBuilder.append("      \"repositoryId\": \"${repositoryId}\"\n");
+        queryBuilder.append("    },\n");
+        queryBuilder.append("    {\n");
+        queryBuilder.append("      \"category\": \"eventDocumentCategory\"\n");
+        queryBuilder.append("    },\n");
+        queryBuilder.append("    {\n");
+        queryBuilder.append("      \"$or\": [\n");
+        queryBuilder.append("        {\n");
+        queryBuilder.append("          \"$and\": [\n");
+        queryBuilder.append("            {\n");
+        queryBuilder.append("              \"category\": \"eventDocumentCategory\"\n");
+        queryBuilder.append("            },\n");
+        queryBuilder.append("            {\n");
+        queryBuilder.append("              \"eventId\": {\n");
+        queryBuilder.append("                \"$in\": [\n");
+        queryBuilder.append("                  \"documentCreated\",\n");
+        queryBuilder.append("                  \"documentModified\",\n");
+        queryBuilder.append("                  \"documentMoved\",\n");
+        queryBuilder.append("                  \"documentCreatedByCopy\",\n");
+        queryBuilder.append("                  \"documentRestored\",\n");
+        queryBuilder.append("                  \"addedToCollection\",\n");
+        queryBuilder.append("                  \"documentProxyPublished\",\n");
+        queryBuilder.append("                  \"documentLocked\",\n");
+        queryBuilder.append("                  \"documentUnlocked\",\n");
+        queryBuilder.append("                  \"documentUntrashed\"\n");
+        queryBuilder.append("                ]\n");
+        queryBuilder.append("              }\n");
+        queryBuilder.append("            }\n");
+        queryBuilder.append("          ]\n");
+        queryBuilder.append("        }, \n");
+        queryBuilder.append("        {\n");
+        queryBuilder.append("          \"$and\": [\n");
+        queryBuilder.append("            {\n");
+        queryBuilder.append("              \"eventId\":  \"lifecycle_transition_event\"\n");
+        queryBuilder.append("            },\n");
+        queryBuilder.append("            {\n");
+        queryBuilder.append("              \"docLifeCycle\": { \"$ne\": \"deleted\" }\n");
+        queryBuilder.append("            }\n");
+        queryBuilder.append("          ]\n");
+        queryBuilder.append("        }\n");
+        queryBuilder.append("      ]\n");
+        queryBuilder.append("    },\n");
+        queryBuilder.append("    {\n");
+        queryBuilder.append("      \"$or\": [\n");
         if (!activeRoots.getPaths().isEmpty()) {
-            // detect changes under the currently active roots for the
-            // current user
-            queryBuilder.and(Predicates.eq(LOG_CATEGORY, EVENT_DOCUMENT_CATEGORY));
-            auditQuerySb.append("(");
-            auditQuerySb.append("log.category = 'eventDocumentCategory'");
-            //TODO: don't hardcode event ids (contribute them?)
-            auditQuerySb.append(
-                    " and (log.eventId = 'documentCreated' or log.eventId = 'documentModified' or log.eventId = 'documentMoved' or log.eventId = 'documentCreatedByCopy' or log.eventId = 'documentRestored' or log.eventId = 'addedToCollection' or log.eventId = 'documentProxyPublished' or log.eventId = 'documentLocked' or log.eventId = 'documentUnlocked' or log.eventId = 'documentUntrashed')");
-//            var events = List.of(DOCUMENT_CREATED, DOCUMENT_UPDATED, DOCUMENT_MOVED, DOCUMENT_CREATED_BY_COPY,
-//                    DOCUMENT_RESTORED, ADDED_TO_COLLECTION, DOCUMENT_PROXY_PUBLISHED, DOCUMENT_LOCKED,
-//                    DOCUMENT_UNLOCKED, DOCUMENT_UNTRASHED);
-//            queryBuilder.and(Predicates.in(LOG_EVENT_ID, events));
-
-            auditQuerySb.append(" or ");
-            auditQuerySb.append("log.category = 'eventLifeCycleCategory'");
-            auditQuerySb.append(" and log.eventId = 'lifecycle_transition_event' and log.docLifeCycle != 'deleted' ");
-            auditQuerySb.append(") and s(");
-            auditQuerySb.append("(");
-            auditQuerySb.append(getCurrentRootFilteringClause(activeRoots.getPaths(), params));
-            auditQuerySb.append(")");
-            if (collectionSyncRootMemberIds != null && !collectionSyncRootMemberIds.isEmpty()) {
-                auditQuerySb.append(" or (");
-                auditQuerySb.append(getCollectionSyncRootFilteringClause(collectionSyncRootMemberIds, params));
-                auditQuerySb.append(")");
-            }
-            auditQuerySb.append(") or ");
+            queryBuilder.append(getCurrentRootFilteringClause(activeRoots.getPaths(), params) + "\n");
         }
-        // Detect any root (un-)registration changes for the roots previously
-        // seen by the current user.
-        // Exclude 'rootUnregistered' since root unregistration is covered by a
-        // "deleted" virtual event.
-        auditQuerySb.append("(");
-        auditQuerySb.append("log.category = '");
-        auditQuerySb.append(NuxeoDriveEvents.EVENT_CATEGORY);
-        auditQuerySb.append("' and log.eventId != 'rootUnregistered'");
-        auditQuerySb.append(")");
-        auditQuerySb.append(") and (");
-        auditQuerySb.append(getJPARangeClause(lowerBound, upperBound, params));
-        // we intentionally sort by eventDate even if the range filtering is
-        // done on the log id: eventDate is useful to reflect the ordering of
-        // events occurring inside the same transaction while the
-        // monotonic behavior of log id is useful for ensuring that consecutive
-        // range queries to the audit won't miss any events even when long
-        // running transactions are logged after a delay.
-        auditQuerySb.append(") order by log.repositoryId asc, log.eventDate desc");
-        String auditQuery = auditQuerySb.toString();
+        if (collectionSyncRootMemberIds != null && !collectionSyncRootMemberIds.isEmpty()) {
+            queryBuilder.append(getCollectionSyncRootFilteringClause(collectionSyncRootMemberIds, params) + "\n");
+        }
+        queryBuilder.append("        {\n");
+        queryBuilder.append("          \"$and\": [\n");
+        queryBuilder.append("            {\n");
+        queryBuilder.append("              \"category\": \"NuxeoDrive\"\n");
+        queryBuilder.append("            },\n");
+        queryBuilder.append("            {\n");
+        queryBuilder.append("              \"eventId\": { \"$ne\": \"rootUnregistered\" }\n");
+        queryBuilder.append("            }\n");
+        queryBuilder.append("          ]\n");
+        queryBuilder.append("        }\n");
+        queryBuilder.append("      ]\n");
+        queryBuilder.append("    },\n");
+        queryBuilder.append("    {\n");
+        queryBuilder.append("      \"$and\": [\n");
+        queryBuilder.append("        {\n");
+        queryBuilder.append("          \"id\": { \"gt\": \"${lowerBound}\" }\n");
+        queryBuilder.append("        },\n");
+        queryBuilder.append("        {\n");
+        queryBuilder.append("          \"id\": { \"lte\": \"${upperBound}\" }\n");
+        queryBuilder.append("        }\n");
+        queryBuilder.append("      ]\n");
+        queryBuilder.append("    }\n");
+        queryBuilder.append("  ]\n");
+        queryBuilder.append("}\n");
 
-        log.debug("Querying audit log for changes: {} with params: {}", auditQuery, params);
-
-*/
-        List<LogEntry> entries = (List<LogEntry>) auditService.queryLogs(new AuditQueryBuilder());
+        Bson filter = auditService.buildFilter(queryBuilder.toString(), params);
+        var sorts = List.of(Sorts.ascending("repositoryId"), Sorts.descending("eventDate"));
+        var order = Sorts.orderBy(sorts);
+        FindIterable<Document> iterable = auditCollection.find(filter).sort(order);
+        List<LogEntry> entries = StreamSupport.stream(iterable.spliterator(), false)
+                                              .map(MongoDBAuditEntryReader::read)
+                                              .collect(Collectors.toList());
 
         // Post filter the output to remove (un)registration that are unrelated
         // to the current user.
@@ -207,6 +240,31 @@ public class MongoDBAuditChangeFinder extends AuditChangeFinder {
             postFilteredEntries.add(entry);
         }
         return postFilteredEntries;
+    }
+
+    @Override
+    protected String getCurrentRootFilteringClause(Set<String> rootPaths, Map<String, Object> params) {
+        StringBuilder rootPathClause = new StringBuilder();
+        int rootPathCount = 0;
+        for (String rootPath : rootPaths) {
+            rootPathCount++;
+            String rootPathParam = "rootPath" + rootPathCount;
+            // if (rootPathClause.length() > 0) {
+            // rootPathClause.append(",");
+            // }
+            rootPathClause.append(String.format("{ \"docPath\": \"/${%s}.*/\" },", rootPathParam));
+            params.put(rootPathParam, rootPath);
+
+        }
+        return rootPathClause.toString();
+    }
+
+    @Override
+    protected String getCollectionSyncRootFilteringClause(Set<String> collectionSyncRootMemberIds,
+            Map<String, Object> params) {
+        String paramName = "collectionMemberIds";
+        params.put(paramName, collectionSyncRootMemberIds);
+        return String.format("{ \"docUUID\": { \"$in\": \"${collectionMemberIds}\" } },", paramName);
     }
 
 }

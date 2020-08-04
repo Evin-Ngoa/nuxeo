@@ -16,12 +16,19 @@
  */
 package org.nuxeo.drive.test;
 
+import java.util.concurrent.TimeUnit;
+
 import org.nuxeo.drive.mongodb.TestMongoDBAuditChangeFinder;
 import org.nuxeo.ecm.automation.test.AutomationFeature;
 import org.nuxeo.ecm.platform.audit.AuditFeature;
+import org.nuxeo.ecm.platform.audit.api.AuditLogger;
+import org.nuxeo.mongodb.audit.MongoDBAuditFeature;
+import org.nuxeo.runtime.api.Framework;
 import org.nuxeo.runtime.test.runner.Deploy;
 import org.nuxeo.runtime.test.runner.Features;
+import org.nuxeo.runtime.test.runner.FeaturesRunner;
 import org.nuxeo.runtime.test.runner.RunnerFeature;
+import org.nuxeo.runtime.test.runner.TransactionalFeature;
 
 /**
  * MongoDB audit feature for nuxeo drive. This Feature is necessary for the deployment annotations to be taken into
@@ -29,8 +36,16 @@ import org.nuxeo.runtime.test.runner.RunnerFeature;
  *
  * @since 11.2
  */
-@Features({ AutomationFeature.class, AuditFeature.class, org.nuxeo.mongodb.audit.MongoDBAuditFeature.class })
+@Features({ AutomationFeature.class, AuditFeature.class, MongoDBAuditFeature.class })
 @Deploy("org.nuxeo.drive.mongodb")
-public class MongoDBAuditFeature implements RunnerFeature {
+public class NuxeoDriveMongoDBAuditFeature implements RunnerFeature {
 
+    @Override
+    public void initialize(FeaturesRunner runner) {
+        runner.getFeature(TransactionalFeature.class)
+              .addWaiter(duration -> {
+                  // Wait for audit completion
+                  return Framework.getService(AuditLogger.class).await(duration.toMillis(), TimeUnit.MILLISECONDS);
+              });
+    }
 }
