@@ -414,6 +414,10 @@ public class S3BlobStore extends AbstractBlobStore {
                 // can't check digest if we have a byte range
                 return true;
             }
+            if (config.useServerSideEncryption && isNotBlank(config.serverSideKMSKeyID)) {
+                // can't get digest from key when using KMS
+                return true;
+            }
             String expectedDigest = getKeyStrategy().getDigestFromKey(objectKey);
             if (expectedDigest != null) {
                 checkDigest(expectedDigest, download, dest);
