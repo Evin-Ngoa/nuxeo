@@ -13,18 +13,14 @@
     </code>
   </documentation>
 
-  <require>org.nuxeo.ecm.core.operation.OperationServiceComponent</require>
-
-  <implementation class="org.nuxeo.automation.scripting.internals.AutomationScriptingComponent" />
-
   <service>
-      <provide interface="org.nuxeo.automation.scripting.api.AutomationScriptingService" />
+    <provide interface="org.nuxeo.automation.scripting.api.AutomationScriptingService" />
   </service>
 
    <extension target="org.nuxeo.runtime.ConfigurationService" point="configuration">
      <documentation>
        Configuration property for enabling backward compatibility with scripting parameters where
-       context variables were inlined.
+       context variables were inlined in version prior to 9.1.
      </documentation>
      <property name="nuxeo.automation.scripting.inline-context-in-params">false</property>
    </extension>

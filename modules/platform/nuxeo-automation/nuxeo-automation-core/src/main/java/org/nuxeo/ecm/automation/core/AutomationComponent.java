@@ -20,7 +20,9 @@
 package org.nuxeo.ecm.automation.core;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import javax.management.InstanceAlreadyExistsException;
 import javax.management.InstanceNotFoundException;
@@ -33,6 +35,13 @@ import javax.management.ObjectName;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.nuxeo.automation.scripting.api.AutomationScriptingService;
+import org.nuxeo.automation.scripting.internals.AutomationScriptingParamsInjector;
+import org.nuxeo.automation.scripting.internals.AutomationScriptingRegistry;
+import org.nuxeo.automation.scripting.internals.AutomationScriptingServiceImpl;
+import org.nuxeo.automation.scripting.internals.ClassFilterDescriptor;
+import org.nuxeo.automation.scripting.internals.ScriptingOperationDescriptor;
+import org.nuxeo.automation.scripting.internals.ScriptingOperationTypeImpl;
 import org.nuxeo.ecm.automation.AutomationAdmin;
 import org.nuxeo.ecm.automation.AutomationFilter;
 import org.nuxeo.ecm.automation.AutomationService;
@@ -51,6 +60,7 @@ import org.nuxeo.ecm.automation.core.exception.ChainExceptionImpl;
 import org.nuxeo.ecm.automation.core.impl.ChainTypeImpl;
 import org.nuxeo.ecm.automation.core.impl.OperationServiceImpl;
 import org.nuxeo.ecm.automation.core.trace.TracerFactory;
+import org.nuxeo.ecm.core.api.NuxeoException;
 import org.nuxeo.ecm.platform.forms.layout.api.WidgetDefinition;
 import org.nuxeo.ecm.platform.forms.layout.descriptors.WidgetDescriptor;
 import org.nuxeo.runtime.api.Framework;
@@ -58,6 +68,7 @@ import org.nuxeo.runtime.management.ServerLocator;
 import org.nuxeo.runtime.model.ComponentContext;
 import org.nuxeo.runtime.model.ComponentInstance;
 import org.nuxeo.runtime.model.DefaultComponent;
+import org.nuxeo.runtime.services.config.ConfigurationService;
 
 /**
  * Nuxeo component that provide an implementation of the {@link AutomationService} and handle extensions registrations.
@@ -83,6 +94,10 @@ public class AutomationComponent extends DefaultComponent {
 
     public static final String XP_CONTEXT_HELPER = "contextHelpers";
 
+    protected static final String XP_SCRIPTED_OPERATION = "operation";
+
+    protected static final String XP_CLASSFILTER = "classFilter";
+
     protected OperationServiceImpl service;
 
     protected EventHandlerRegistry handlers;
@@ -93,6 +108,12 @@ public class AutomationComponent extends DefaultComponent {
 
     protected ContextService contextService;
 
+    protected AutomationScriptingServiceImpl scriptingService;
+
+    protected AutomationScriptingRegistry scriptingRegistry;
+
+    protected final List<ClassFilterDescriptor> classFilterDescriptors = new ArrayList<>();
+
     @Override
     public void activate(ComponentContext context) {
         service = new OperationServiceImpl();
@@ -100,6 +121,11 @@ public class AutomationComponent extends DefaultComponent {
         handlers = new EventHandlerRegistry(service);
         contextHelperRegistry = new ContextHelperRegistry();
         contextService = new ContextServiceImpl(contextHelperRegistry);
+        scriptingService = new AutomationScriptingServiceImpl();
+        scriptingRegistry = new AutomationScriptingRegistry();
+        scriptingRegistry.automation = Framework.getService(AutomationService.class);
+        scriptingRegistry.scripting = scriptingService;
+        classFilterDescriptors.clear();
     }
 
     protected void bindManagement() throws JMException {
@@ -188,6 +214,19 @@ public class AutomationComponent extends DefaultComponent {
             }
         } else if (XP_CONTEXT_HELPER.equals(extensionPoint)) {
             contextHelperRegistry.addContribution((ContextHelperDescriptor) contribution);
+        } else if (XP_SCRIPTED_OPERATION.equals(extensionPoint)) {
+            ScriptingOperationDescriptor desc = (ScriptingOperationDescriptor) contribution;
+            desc.setContributingComponent(contributor.getName().toString());
+            ScriptingOperationTypeImpl type = new ScriptingOperationTypeImpl(scriptingService, service, desc);
+            try {
+                service.putOperation(type, true);
+            } catch (OperationException e) {
+                throw new NuxeoException("Cannot register scripting operation " + desc.getId(), e);
+            }
+        } else if (XP_CLASSFILTER.equals(extensionPoint)) {
+            registerClassFilter((ClassFilterDescriptor) contribution);
+        } else {
+            log.error("Unknown extension point " + extensionPoint);
         }
     }
 
@@ -223,7 +262,41 @@ public class AutomationComponent extends DefaultComponent {
             }
         } else if (XP_CONTEXT_HELPER.equals(extensionPoint)) {
             contextHelperRegistry.removeContribution((ContextHelperDescriptor) contribution);
+        } else if (XP_SCRIPTED_OPERATION.equals(extensionPoint)) {
+            ScriptingOperationTypeImpl type = new ScriptingOperationTypeImpl(scriptingService, service,
+                    (ScriptingOperationDescriptor) contribution);
+            service.removeOperation(type);
+        } else if (XP_CLASSFILTER.equals(extensionPoint)) {
+            unregisterClassFilter((ClassFilterDescriptor) contribution);
+        } else {
+            log.error("Unknown extension point " + extensionPoint);
         }
+    }
+
+    protected void registerClassFilter(ClassFilterDescriptor desc) {
+        classFilterDescriptors.add(desc);
+        recomputeClassFilters();
+    }
+
+    protected void unregisterClassFilter(ClassFilterDescriptor desc) {
+        classFilterDescriptors.remove(desc);
+        recomputeClassFilters();
+    }
+
+    protected void recomputeClassFilters() {
+        Set<String> allowedClassNames = new HashSet<>();
+        for (ClassFilterDescriptor desc : classFilterDescriptors) {
+            if (desc.deny.contains("*")) {
+                allowedClassNames.clear();
+                allowedClassNames.addAll(desc.allow);
+            } else {
+                allowedClassNames.addAll(desc.allow);
+                allowedClassNames.removeAll(desc.deny);
+            }
+        }
+        // we don't care about update atomicity, as nothing executes concurrently with XML config
+        scriptingService.allowedClassNames.clear();
+        scriptingService.allowedClassNames.addAll(allowedClassNames);
     }
 
     @Override
@@ -240,11 +313,18 @@ public class AutomationComponent extends DefaultComponent {
         if (adapter == ContextService.class) {
             return adapter.cast(contextService);
         }
+        if (adapter.isAssignableFrom(AutomationScriptingService.class)) {
+            return adapter.cast(scriptingService);
+        }
         return null;
     }
 
     @Override
     public void start(ComponentContext context) {
+        boolean inlinedContext = Framework.getService(ConfigurationService.class)
+                                          .isBooleanTrue("nuxeo.automation.scripting.inline-context-in-params");
+        scriptingService.paramsInjector = AutomationScriptingParamsInjector.newInstance(inlinedContext);
+
         if (!tracerFactory.getRecordingState()) {
             log.info("You can activate automation trace mode to get more informations on automation executions");
         }

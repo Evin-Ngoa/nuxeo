@@ -2,7 +2,7 @@
 <Configuration>
   <Appenders>
     <Console name="CONSOLE" target="SYSTEM_OUT">
-      <ThresholdFilter level="WARN" onMatch="ACCEPT" />
+      <ThresholdFilter level="DEBUG" onMatch="ACCEPT" />
       <PatternLayout pattern="%d{DEFAULT} [%t] %-5p [%C{1}] %m%n" />
     </Console>
     <File name="FILE" fileName="${sys:custom.environment.log.dir:-target}/trace.log" append="false">
@@ -12,10 +12,11 @@
   </Appenders>
   <Loggers>
     <Logger name="org.nuxeo" level="info" />
+    <Logger name="org.nuxeo.runtime" level="debug" />
     <Logger name="org.nuxeo.automation.scripting.helper" level="warn" /> <!-- needed by TestScriptHelpers -->
 
     <Logger name="jdk.nashorn" level="trace" />
-    <Root level="warn">
+    <Root level="debug">
       <AppenderRef ref="CONSOLE" />
       <AppenderRef ref="FILE" />
     </Root>

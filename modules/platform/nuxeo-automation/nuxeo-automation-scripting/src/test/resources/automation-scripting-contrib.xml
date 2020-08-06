@@ -10,7 +10,7 @@
     <operation class="org.nuxeo.automation.scripting.test.operations.TestEchoParameter"/>
   </extension>
 
-  <extension target="org.nuxeo.automation.scripting.internals.AutomationScriptingComponent" point="operation">
+  <extension target="org.nuxeo.ecm.core.operation.OperationServiceComponent" point="operation">
 
     <scriptedOperation id="Scripting.HelloWorld">
        <inputType>string</inputType>

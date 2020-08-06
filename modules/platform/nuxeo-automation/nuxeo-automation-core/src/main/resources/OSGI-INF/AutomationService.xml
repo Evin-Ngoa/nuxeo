@@ -1,9 +1,9 @@
 <?xml version="1.0"?>
 <component name="org.nuxeo.ecm.core.operation.OperationServiceComponent"
   version="1.0">
-  <!-- TODO: cannot rename this component since studio is using the old name - fix this
-    <component name="org.nuxeo.ecm.automation.core.AutomationComponent" version="1.0">
-  -->
+
+  <alias>org.nuxeo.ecm.automation.core.AutomationComponent</alias>
+  <alias>org.nuxeo.automation.scripting.internals.AutomationScriptingComponent</alias>
 
   <documentation>@author Bogdan Stefanescu (bs@nuxeo.com)</documentation>
 
@@ -14,15 +14,47 @@
   <service>
     <provide interface="org.nuxeo.ecm.automation.AutomationService" />
     <provide interface="org.nuxeo.ecm.automation.AutomationAdmin" />
-    <provide
-            interface="org.nuxeo.ecm.automation.core.events.EventHandlerRegistry" />
+    <provide interface="org.nuxeo.ecm.automation.core.events.EventHandlerRegistry" />
     <provide interface="org.nuxeo.ecm.automation.core.trace.TracerFactory" />
     <provide interface="org.nuxeo.ecm.automation.context.ContextService" />
+    <provide interface="org.nuxeo.automation.scripting.api.AutomationScriptingService" />
   </service>
+
+   <extension target="org.nuxeo.runtime.ConfigurationService" point="configuration">
+     <documentation>
+       Configuration property for enabling backward compatibility with scripting parameters where
+       context variables were inlined in version prior to 9.1.
+     </documentation>
+     <property name="nuxeo.automation.scripting.inline-context-in-params">false</property>
+   </extension>
 
   <extension-point name="operations">
     <documentation>Operation registration</documentation>
     <object class="org.nuxeo.ecm.automation.core.OperationContribution" />
+  </extension-point>
+
+  <extension-point name="operation">
+    <documentation>Scripted Operation registration</documentation>
+    <documentation>
+      <code>
+      <scriptedOperation id="Scripting.HelloWorld">
+        <inputType>string</inputType>
+        <outputType>string</outputType>
+        <param name="lang" type="string"/>
+        <script>
+          function run(input, params) {
+          if (params.lang === "fr") {
+          return "Bonjour " + input;
+          } else {
+          return "Hello " + input;
+          }
+          }
+        </script>
+      </scriptedOperation>
+      </code>
+    </documentation>
+
+    <object class="org.nuxeo.automation.scripting.internals.ScriptingOperationDescriptor" />
   </extension-point>
 
   <extension-point name="adapters">
@@ -73,6 +105,35 @@
       </code>
     </documentation>
     <object class="org.nuxeo.ecm.automation.core.AutomationFilterDescriptor"/>
+  </extension-point>
+
+  <extension-point name="classFilter">
+    <documentation>
+      This can be used to allow additional classes to be accessible by the scripting engine.
+      The deny element can be used to disallow classes allowed by previous contributions.
+      By default, no classes are allowed.
+
+      @since 10.2
+      <code>
+        <classFilter>
+          <allow>java.util.ArrayList</allow>
+          <allow>java.util.UUID</allow>
+          <deny>java.io.File</deny>
+          <deny>java.lang.Class</deny>
+        </classFilter>
+      </code>
+
+      To deny everything from previous contributions and only allow specific classes, use:
+      <code>
+        <classFilter>
+          <deny>*</deny>
+          <allow>java.util.ArrayList</allow>
+        </classFilter>
+      </code>
+
+    </documentation>
+
+    <object class="org.nuxeo.automation.scripting.internals.ClassFilterDescriptor" />
   </extension-point>
 
   <extension-point name="event-handlers">
@@ -191,7 +252,6 @@
              accept="java.util.Collection"
              produce="org.nuxeo.ecm.automation.core.util.BlobList" />
   </extension>
-
 
   <extension target="org.nuxeo.ecm.core.event.EventServiceComponent"
     point="listener">
